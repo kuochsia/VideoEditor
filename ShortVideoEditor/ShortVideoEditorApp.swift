@@ -13,5 +13,6 @@ struct ShortVideoEditorApp: App {
         WindowGroup {
             ContentView()
         }
+        .windowStyle(.hiddenTitleBar)  // optionnel
     }
 }
