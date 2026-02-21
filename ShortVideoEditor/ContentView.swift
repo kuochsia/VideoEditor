@@ -1,8 +1,6 @@
 import SwiftUI
 import AVKit
 
-// MARK: - Root Content View
-
 struct ContentView: View {
     @StateObject private var vm = EditorViewModel()
 
@@ -12,9 +10,7 @@ struct ContentView: View {
             SidebarView(vm: vm)
         }
         .overlay {
-            if vm.isExporting {
-                exportingOverlay
-            }
+            if vm.isExporting { exportingOverlay }
         }
         .alert("Erreur d'exportation", isPresented: $vm.showExportError, presenting: vm.exportError) { _ in
             Button("OK", role: .cancel) {}
@@ -32,25 +28,19 @@ struct ContentView: View {
             Color(white: 0.05).ignoresSafeArea()
 
             GeometryReader { geo in
-                // Compute preview dimensions to fit inside the available space
-                // while respecting the selected output format's aspect ratio.
                 let ratio = vm.outputFormat.previewAspectRatio
                 let availW = geo.size.width
                 let availH = geo.size.height
-
-                // Fit inside the panel: try height-constrained first, clamp to width if needed
-                let hFromH = availH
-                let wFromH = hFromH * ratio
+                let wFromH = availH * ratio
                 let (w, h): (CGFloat, CGFloat) = wFromH <= availW
-                    ? (wFromH, hFromH)
+                    ? (wFromH, availH)
                     : (availW, availW / ratio)
 
                 ZStack {
                     if let player = vm.sharedPlayer {
                         videoStack(player: player, bgPlayer: vm.bgPlayer, w: w, h: h)
                     } else {
-                        placeholderView
-                            .frame(width: w, height: h)
+                        placeholderView.frame(width: w, height: h)
                     }
                 }
                 .animation(.easeInOut(duration: 0.3), value: vm.outputFormat)
@@ -67,34 +57,31 @@ struct ContentView: View {
     private func videoStack(player: AVPlayer, bgPlayer: AVPlayer?, w: CGFloat, h: CGFloat) -> some View {
         ZStack(alignment: .bottom) {
 
-            // MARK: Background layer (crop-mode dependent)
-            Group {
-                switch vm.cropMode {
-                case .fill:
-                    AVPlayerLayerView(player: player, gravity: .resizeAspectFill)
-                        .frame(width: w, height: h)
-
-                case .black:
-                    Color.black.frame(width: w, height: h)
-
-                case .blurred:
-                    if let bg = bgPlayer {
-                        AVPlayerLayerView(player: bg, gravity: .resizeAspectFill)
-                            .frame(width: w, height: h)
-                    } else {
-                        Color.black.frame(width: w, height: h)
-                    }
-                }
-            }
-            .animation(.easeInOut(duration: 0.25), value: vm.cropMode)
-
-            // MARK: Foreground video — aspectFit, transparent background (black + blurred modes)
-            if vm.cropMode != .fill {
-                AVPlayerLayerView(player: player, gravity: .resizeAspect, transparentBackground: true)
+            // MARK: Background
+            switch vm.cropMode {
+            case .fill:
+                AVPlayerNSView(player: player, gravity: .resizeAspectFill)
                     .frame(width: w, height: h)
+
+            case .black:
+                AVPlayerNSView(player: player, gravity: .resizeAspect)
+                    .frame(width: w, height: h)
+            case .blurred:
+                ZStack {
+                    // bg video fill — blurred via SwiftUI
+                    AVPlayerNSView(player: player, gravity: .resizeAspectFill)
+                        .frame(width: w, height: h)
+                        .blur(radius: CGFloat(vm.blurIntensity) * 0.3)
+                        .clipped()
+               
+                    // fg video fit — sharp, on top
+                    AVPlayerNSView(player: player, gravity: .resizeAspect)
+                        .frame(width: w, height: w*9/16)
+                }
+                .frame(width: w, height: h)
             }
 
-            // MARK: Image overlays
+            // MARK: Overlays
             ForEach($vm.overlays) { $item in
                 DraggableOverlayView(
                     item: $item,
@@ -108,14 +95,16 @@ struct ContentView: View {
                 subtitleView(w: w, h: h)
             }
 
-            // MARK: Custom controls bar — pinned to the bottom
+            // MARK: Controls bar
             PlayerControlsBar(player: player)
                 .frame(width: w)
         }
         .frame(width: w, height: h)
         .background(Color.black)
         .clipped()
-        .onAppear { vm.lastPreviewHeight = vm.outputFormat.previewReferenceIsHeight ? h : w }
+        .onAppear {
+            vm.lastPreviewHeight = vm.outputFormat.previewReferenceIsHeight ? h : w
+        }
         .onChange(of: h) { newH in
             vm.lastPreviewHeight = vm.outputFormat.previewReferenceIsHeight ? newH : w
         }
@@ -142,8 +131,6 @@ struct ContentView: View {
             .allowsHitTesting(false)
     }
 
-    // MARK: - Placeholder
-
     private var placeholderView: some View {
         VStack(spacing: 15) {
             Image(systemName: "video.badge.plus")
@@ -155,20 +142,12 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Exporting Overlay
-    // Only shown as a blocking overlay during the export process itself.
-    // Progress detail is shown inline in the sidebar for a less intrusive experience.
-
     private var exportingOverlay: some View {
         ZStack {
             Color.black.opacity(0.6).ignoresSafeArea()
             VStack(spacing: 16) {
-                ProgressView()
-                    .scaleEffect(1.5)
-                    .tint(.white)
-                Text("Exportation en cours…")
-                    .foregroundColor(.white)
-                    .font(.headline)
+                ProgressView().scaleEffect(1.5).tint(.white)
+                Text("Exportation en cours…").foregroundColor(.white).font(.headline)
                 Text("\(Int(vm.exportProgress * 100))%")
                     .foregroundColor(.white.opacity(0.7))
                     .font(.title2.monospacedDigit())
