@@ -10,7 +10,8 @@ final class EditorViewModel: ObservableObject {
     // MARK: Video
     @Published var inputURL: URL?
     @Published var sharedPlayer: AVPlayer?
-    @Published var bgPlayer: AVPlayer?  // second player for blurred bg test (no filters)
+    @Published var bgPlayer: AVPlayer?
+    @Published var videoNaturalSize: CGSize = .zero  // actual size after preferredTransform
 
     // MARK: Overlays
     @Published var overlays: [OverlayImage] = []
@@ -46,7 +47,7 @@ final class EditorViewModel: ObservableObject {
     @Published var blurIntensity: Double = 40.0
 
     // MARK: Preview
-    @Published var lastPreviewHeight: CGFloat = 800
+    @Published var lastPreviewVideoSize: CGSize = CGSize(width: 338, height: 600)
 
     // MARK: Private
     private var timeObserver: Any?
@@ -154,7 +155,14 @@ final class EditorViewModel: ObservableObject {
         sharedPlayer = player
         setupTimer(for: player)
 
-        // Second player for blurred background test
+        // Detect actual visual size (accounts for rotation from preferredTransform)
+        let asset = AVAsset(url: url)
+        if let track = asset.tracks(withMediaType: .video).first {
+            let size = track.naturalSize.applying(track.preferredTransform)
+            videoNaturalSize = CGSize(width: abs(size.width), height: abs(size.height))
+        }
+
+        // Second player for blurred background
         let bg = AVPlayer(url: url)
         bg.isMuted = true
         bgPlayer = bg
@@ -263,7 +271,7 @@ final class EditorViewModel: ObservableObject {
             outputFormat: outputFormat,
             cropMode: cropMode,
             blurIntensity: blurIntensity,
-            previewHeight: lastPreviewHeight,
+            previewVideoSize: lastPreviewVideoSize,
             outputURL: outputURL,
             onProgress: { [weak self] progress in
                 DispatchQueue.main.async {

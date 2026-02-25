@@ -110,7 +110,8 @@ final class BlurCompositor: NSObject, AVVideoCompositing {
             composited,
             to: outputBuffer,
             bounds: canvas,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
+            // Use the color space from the source buffer to preserve original luminance
+            colorSpace: nil
         )
 
         request.finish(withComposedVideoFrame: outputBuffer)

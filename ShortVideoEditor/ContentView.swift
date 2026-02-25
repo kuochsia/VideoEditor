@@ -64,19 +64,33 @@ struct ContentView: View {
                     .frame(width: w, height: h)
 
             case .black:
-                AVPlayerNSView(player: player, gravity: .resizeAspect)
-                    .frame(width: w, height: h)
-            case .blurred:
                 ZStack {
-                    // bg video fill — blurred via SwiftUI
+                    Color.black.frame(width: w, height: h)
+                    let srcW = vm.videoNaturalSize.width
+                    let srcH = vm.videoNaturalSize.height
+                    let srcRatio = (srcW > 0 && srcH > 0) ? srcW / srcH : 16.0 / 9.0
+                    let fgW = (w / h < srcRatio) ? w : h * srcRatio
+                    let fgH = (w / h < srcRatio) ? w / srcRatio : h
+                    AVPlayerNSView(player: player, gravity: .resizeAspect)
+                        .frame(width: fgW, height: fgH)
+                }
+                .frame(width: w, height: h)
+
+            case .blurred:
+                let srcW = vm.videoNaturalSize.width
+                let srcH = vm.videoNaturalSize.height
+                let srcRatio = (srcW > 0 && srcH > 0) ? srcW / srcH : 16.0 / 9.0
+                let fgW = (w / h < srcRatio) ? w : h * srcRatio
+                let fgH = (w / h < srcRatio) ? w / srcRatio : h
+                ZStack {
+                    // Background: fill + blur
                     AVPlayerNSView(player: player, gravity: .resizeAspectFill)
                         .frame(width: w, height: h)
                         .blur(radius: CGFloat(vm.blurIntensity) * 0.3)
                         .clipped()
-               
-                    // fg video fit — sharp, on top
+                    // Foreground: exact AspectFit frame from source ratio
                     AVPlayerNSView(player: player, gravity: .resizeAspect)
-                        .frame(width: w, height: w*9/16)
+                        .frame(width: fgW, height: fgH)
                 }
                 .frame(width: w, height: h)
             }
@@ -103,14 +117,26 @@ struct ContentView: View {
         .background(Color.black)
         .clipped()
         .onAppear {
-            vm.lastPreviewHeight = vm.outputFormat.previewReferenceIsHeight ? h : w
+            vm.lastPreviewVideoSize = computeVideoDisplaySize(w: w, h: h)
         }
         .onChange(of: h) { newH in
-            vm.lastPreviewHeight = vm.outputFormat.previewReferenceIsHeight ? newH : w
+            vm.lastPreviewVideoSize = computeVideoDisplaySize(w: w, h: newH)
+        }
+        .onChange(of: w) { newW in
+            vm.lastPreviewVideoSize = computeVideoDisplaySize(w: newW, h: h)
         }
         .onChange(of: vm.outputFormat) { _ in
-            vm.lastPreviewHeight = vm.outputFormat.previewReferenceIsHeight ? h : w
+            vm.lastPreviewVideoSize = computeVideoDisplaySize(w: w, h: h)
         }
+        .onChange(of: vm.videoNaturalSize) { _ in
+            vm.lastPreviewVideoSize = computeVideoDisplaySize(w: w, h: h)
+        }
+    }
+
+    // Store the full canvas size (w, h).
+    // Subtitles/overlays are positioned relative to the canvas, so scale = renderH / canvasH.
+    private func computeVideoDisplaySize(w: CGFloat, h: CGFloat) -> CGSize {
+        return CGSize(width: w, height: h)
     }
 
     private func subtitleView(w: CGFloat, h: CGFloat) -> some View {

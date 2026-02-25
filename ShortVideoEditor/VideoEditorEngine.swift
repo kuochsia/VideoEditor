@@ -18,7 +18,7 @@ final class VideoEditorEngine {
         outputFormat: OutputFormat,
         cropMode: CropMode,
         blurIntensity: Double,
-        previewHeight: CGFloat,
+        previewVideoSize: CGSize,  // actual display size of video in preview (after AspectFit)
         outputURL: URL,
         onProgress: @escaping (Float) -> Void,
         completion: @escaping (Bool, Error?) -> Void
@@ -89,7 +89,10 @@ final class VideoEditorEngine {
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        let sourceFrameRate = videoTrack.nominalFrameRate
+        let frameRate = sourceFrameRate > 0 ? sourceFrameRate : 30
+        videoComposition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
+
 
         let timeRange = CMTimeRange(start: .zero, duration: asset.duration)
         let instruction = AVMutableVideoCompositionInstruction()
@@ -153,9 +156,14 @@ final class VideoEditorEngine {
         parentLayer.addSublayer(videoLayer)
 
         // MARK: Scale Factor
-        let uiToVideoScale = outputFormat.previewReferenceIsHeight
-            ? renderSize.height / previewHeight
-            : renderSize.width  / previewHeight
+        // SwiftUI measures in logical points; renderSize is in physical pixels.
+        // On Retina screens (2x), 1 SwiftUI point = 2 physical pixels.
+        // We must multiply the preview canvas size by backingScaleFactor to get
+        // physical pixels, then divide into renderSize (also physical pixels).
+        let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let canvasPhysicalH = previewVideoSize.height * screenScale
+        let canvasPhysicalW = previewVideoSize.width  * screenScale
+        let uiToVideoScale = renderSize.height / canvasPhysicalH
 
         // MARK: Overlay Layers
         for overlay in overlays {
@@ -269,7 +277,8 @@ final class VideoEditorEngine {
             text: entry.text,
             style: style,
             background: background,
-            uiToVideoScale: uiToVideoScale
+            uiToVideoScale: uiToVideoScale,
+            renderWidth: renderSize.width
         ) else { return nil }
 
         let imgWidth = CGFloat(subtitleImage.width)
@@ -342,7 +351,8 @@ final class VideoEditorEngine {
         text: String,
         style: SubtitleStyle,
         background: BackgroundStyle,
-        uiToVideoScale: CGFloat
+        uiToVideoScale: CGFloat,
+        renderWidth: CGFloat
     ) -> CGImage? {
         let scaledFontSize = style.fontSize * uiToVideoScale
         let font = NSFont(name: style.fontName, size: scaledFontSize)
@@ -357,7 +367,8 @@ final class VideoEditorEngine {
             .paragraphStyle: paragraphStyle
         ]
         let attrStr = NSAttributedString(string: text, attributes: attrs)
-        let maxW: CGFloat = 1000
+        // Use 90% of render width so text has some horizontal margin
+        let maxW = renderWidth * 0.9
         let boundingRect = attrStr.boundingRect(
             with: NSSize(width: maxW, height: 2000),
             options: [.usesLineFragmentOrigin, .usesFontLeading]

@@ -2,8 +2,6 @@ import SwiftUI
 import AVKit
 import Combine
 
-// MARK: - Player Controls Bar
-
 struct PlayerControlsBar: View {
     let player: AVPlayer
 
@@ -30,7 +28,7 @@ struct PlayerControlsBar: View {
             Text(formatTime(currentTime))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.white.opacity(0.8))
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: 70, alignment: .trailing)
 
             // Scrubber
             Slider(value: $currentTime, in: 0...max(duration, 1)) { editing in
@@ -49,13 +47,23 @@ struct PlayerControlsBar: View {
             Text(formatTime(duration))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundColor(.white.opacity(0.5))
-                .frame(width: 44, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.ultraThinMaterial)
-        .onAppear { attachObservers() }
-        .onDisappear { detachObservers() }
+        .onAppear {
+            attachObservers(to: player)
+        }
+        .onDisappear {
+            detachObservers(from: player)
+        }
+        // Re-attach when the player instance changes (new video dropped)
+        .onChange(of: player) { newPlayer in
+            detachObservers(from: player)
+            resetState()
+            attachObservers(to: newPlayer)
+        }
     }
 
     // MARK: - Actions
@@ -71,47 +79,61 @@ struct PlayerControlsBar: View {
         }
     }
 
+    // MARK: - State Reset
+
+    private func resetState() {
+        isPlaying = false
+        currentTime = 0
+        duration = 1
+        isSeeking = false
+    }
+
     // MARK: - Observation
 
-    private func attachObservers() {
-        // KVO on rate → reflects external play/pause changes immediately
-        rateObserver = player.observe(\.rate, options: [.new, .initial]) { p, _ in
-            DispatchQueue.main.async { isPlaying = p.rate != 0 }
+    private func attachObservers(to p: AVPlayer) {
+        // KVO on rate → play/pause state
+        rateObserver = p.observe(\.rate, options: [.new, .initial]) { player, _ in
+            DispatchQueue.main.async { isPlaying = player.rate != 0 }
         }
 
-        // KVO on currentItem.status → load duration as soon as asset is ready
-        statusObserver = player.currentItem?.observe(\.status, options: [.new, .initial]) { item, _ in
+        // KVO on currentItem.status → duration
+        statusObserver = p.currentItem?.observe(\.status, options: [.new, .initial]) { item, _ in
             DispatchQueue.main.async { loadDuration(from: item) }
         }
 
-        // Periodic time observer → scrubber + current time label
-        timeObserver = player.addPeriodicTimeObserver(
+        // Periodic time → scrubber position
+        timeObserver = p.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.05, preferredTimescale: 600),
             queue: .main
         ) { time in
             guard !isSeeking else { return }
             currentTime = time.seconds
+            // Refresh duration if not yet loaded
+            if duration <= 1, let item = p.currentItem {
+                loadDuration(from: item)
+            }
         }
 
-        // Reset isPlaying when playback reaches the end
+        // End of playback
         NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem,
+            object: p.currentItem,
             queue: .main
         ) { _ in
             isPlaying = false
         }
     }
 
-    private func detachObservers() {
+    private func detachObservers(from p: AVPlayer) {
         if let observer = timeObserver {
-            player.removeTimeObserver(observer)
+            p.removeTimeObserver(observer)
             timeObserver = nil
         }
         rateObserver?.invalidate()
         rateObserver = nil
         statusObserver?.invalidate()
         statusObserver = nil
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func loadDuration(from item: AVPlayerItem) {
@@ -119,12 +141,13 @@ struct PlayerControlsBar: View {
         if d.isFinite && d > 0 { duration = d }
     }
 
-    // MARK: - Helpers
+    // MARK: - Format  m:ss.ms
 
     private func formatTime(_ seconds: Double) -> String {
-        guard seconds.isFinite else { return "0:00" }
-        let m = Int(seconds) / 60
-        let s = Int(seconds) % 60
-        return String(format: "%d:%02d", m, s)
+        guard seconds.isFinite, seconds >= 0 else { return "0:00.000" }
+        let m  = Int(seconds) / 60
+        let s  = Int(seconds) % 60
+        let ms = Int((seconds.truncatingRemainder(dividingBy: 1)) * 1000)
+        return String(format: "%d:%02d.%03d", m, s, ms)
     }
 }

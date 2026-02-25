@@ -26,7 +26,7 @@ struct SidebarView: View {
                 }
             }
 
-            Spacer()
+            //Spacer()
 
             if vm.sharedPlayer != nil {
                 exportSettingsSection
@@ -151,28 +151,61 @@ struct SidebarView: View {
     // MARK: - Export Settings
 
     private var exportSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-
-            // Row 1: filename + format
-            HStack(spacing: 8) {
-                TextField("Nom du fichier", text: $vm.outputFileName)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                Text(".mp4").foregroundColor(.secondary).font(.caption)
-
-                Divider().frame(height: 20)
-
-                // Format picker
+        Group {
+            Text("EXPORT").font(.caption).foregroundColor(.secondary).bold()
+            
+            VStack(alignment: .leading, spacing: 6) {
+                // Row 1: filename + format
+                HStack(spacing: 8) {
+                    TextField("Nom du fichier", text: $vm.outputFileName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                    Text(".mp4").foregroundColor(.secondary).font(.caption)
+                    
+                    Divider().frame(height: 20)
+                    
+                    // Format picker
+                    HStack(spacing: 0) {
+                        ForEach(OutputFormat.allCases) { format in
+                            let isSelected = vm.outputFormat == format
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 0)
+                                    .fill(isSelected ? Color.blue.opacity(0.15) : Color.clear)
+                                HStack(spacing: 3) {
+                                    Image(systemName: format.icon)
+                                        .font(.system(size: 10))
+                                    Text(format.rawValue)
+                                        .font(.caption2).bold()
+                                }
+                                .foregroundColor(isSelected ? .blue : .secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                            .onTapGesture { vm.outputFormat = format }
+                            
+                            if format != OutputFormat.allCases.last {
+                                Divider().frame(height: 20)
+                            }
+                        }
+                    }
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(6)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.2)))
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                
+                // Row 2: crop mode picker
                 HStack(spacing: 0) {
-                    ForEach(OutputFormat.allCases) { format in
-                        let isSelected = vm.outputFormat == format
+                    ForEach(CropMode.allCases) { mode in
+                        let isSelected = vm.cropMode == mode
                         ZStack {
                             RoundedRectangle(cornerRadius: 0)
                                 .fill(isSelected ? Color.blue.opacity(0.15) : Color.clear)
-                            HStack(spacing: 3) {
-                                Image(systemName: format.icon)
+                            HStack(spacing: 4) {
+                                Image(systemName: mode.icon)
                                     .font(.system(size: 10))
-                                Text(format.rawValue)
+                                Text(mode.description)
                                     .font(.caption2).bold()
                             }
                             .foregroundColor(isSelected ? .blue : .secondary)
@@ -180,9 +213,9 @@ struct SidebarView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                         .contentShape(Rectangle())
-                        .onTapGesture { vm.outputFormat = format }
-
-                        if format != OutputFormat.allCases.last {
+                        .onTapGesture { vm.cropMode = mode }
+                        
+                        if mode != CropMode.allCases.last {
                             Divider().frame(height: 20)
                         }
                     }
@@ -191,54 +224,24 @@ struct SidebarView: View {
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.2)))
                 .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Row 2: crop mode picker
-            HStack(spacing: 0) {
-                ForEach(CropMode.allCases) { mode in
-                    let isSelected = vm.cropMode == mode
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 0)
-                            .fill(isSelected ? Color.orange.opacity(0.15) : Color.clear)
-                        HStack(spacing: 4) {
-                            Image(systemName: mode.icon)
-                                .font(.system(size: 10))
-                            Text(mode.description)
-                                .font(.caption2).bold()
-                        }
-                        .foregroundColor(isSelected ? .orange : .secondary)
+                // Row 3: blur slider (only visible in blurred mode)
+                if vm.cropMode == .blurred {
+                    HStack(spacing: 8) {
+                        Text("Flou")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(width: 30, alignment: .leading)
+                        Slider(value: $vm.blurIntensity, in: 5...80)
+                        Text("\(Int(vm.blurIntensity))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.secondary)
+                            .frame(width: 24, alignment: .trailing)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-                    .contentShape(Rectangle())
-                    .onTapGesture { vm.cropMode = mode }
-
-                    if mode != CropMode.allCases.last {
-                        Divider().frame(height: 20)
-                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
-            .background(Color.gray.opacity(0.1))
-            .cornerRadius(6)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.2)))
-
-            // Row 3: blur slider (only visible in blurred mode)
-            if vm.cropMode == .blurred {
-                HStack(spacing: 8) {
-                    Text("Flou")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(width: 30, alignment: .leading)
-                    Slider(value: $vm.blurIntensity, in: 5...80)
-                    Text("\(Int(vm.blurIntensity))")
-                        .font(.caption.monospacedDigit())
-                        .foregroundColor(.secondary)
-                        .frame(width: 24, alignment: .trailing)
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            .animation(.easeInOut(duration: 0.2), value: vm.cropMode)
         }
-        .animation(.easeInOut(duration: 0.2), value: vm.cropMode)
     }
 
     // MARK: - Export Button
