@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import AppKit
 import Combine
 
 // MARK: - Editor ViewModel
@@ -11,10 +12,26 @@ final class EditorViewModel: ObservableObject {
     @Published var inputURL: URL?
     @Published var sharedPlayer: AVPlayer?
     @Published var bgPlayer: AVPlayer?
-    @Published var videoNaturalSize: CGSize = .zero  // actual size after preferredTransform
+    @Published var videoNaturalSize: CGSize = .zero
 
     // MARK: Overlays
     @Published var overlays: [OverlayImage] = []
+
+    // MARK: Drop errors
+    @Published var showDropError: Bool = false
+    @Published var dropError: String? = nil
+
+    // MARK: Overlay manager
+    @Published var showOverlayManager: Bool = false
+    @Published var overlayManagerPosition: CGPoint = .zero
+
+    // MARK: Preview canvas — single source of truth for both drop positioning and export scale
+    @Published var previewCanvasSize: CGSize = CGSize(width: 338, height: 600)
+
+    var lastPreviewVideoSize: CGSize {
+        get { previewCanvasSize }
+        set { previewCanvasSize = newValue }
+    }
 
     // MARK: Subtitles
     @Published var subtitles: [SubtitleEntry] = []
@@ -47,7 +64,7 @@ final class EditorViewModel: ObservableObject {
     @Published var blurIntensity: Double = 40.0
 
     // MARK: Preview
-    @Published var lastPreviewVideoSize: CGSize = CGSize(width: 338, height: 600)
+    // (lastPreviewVideoSize is a computed alias → see previewCanvasSize above)
 
     // MARK: Private
     private var timeObserver: Any?
@@ -127,25 +144,106 @@ final class EditorViewModel: ObservableObject {
 
     // MARK: - Drop Handling
 
-    func handleSmartDrop(providers: [NSItemProvider]) {
-        for provider in providers {
-            provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { [weak self] data, _ in
-                guard let self,
-                      let urlData = data as? Data,
-                      let url = URL(dataRepresentation: urlData, relativeTo: nil) else { return }
+    func handleSmartDrop(providers: [NSItemProvider], dropLocation: CGPoint = .zero, panelSize: CGSize = .zero) {
+        // Process only the first provider to avoid duplicates
+        guard let provider = providers.first else { return }
+
+        provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { [weak self] item, error in
+            guard let self else { return }
+
+            // Resolve URL from whatever type was returned
+            let url: URL?
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let u = item as? URL {
+                url = u
+            } else if let str = item as? String {
+                url = URL(string: str)
+            } else {
+                url = nil
+            }
+
+            guard let url else {
                 DispatchQueue.main.async {
-                    let ext = url.pathExtension.lowercased()
-                    if ["mp4", "mov", "m4v"].contains(ext) {
-                        self.loadVideo(url: url)
-                    } else if ext == "srt" {
-                        self.loadSRT(url: url)
-                    } else if let image = NSImage(contentsOf: url) {
-                        self.overlays.append(OverlayImage(url: url, nsImage: image))
-                        PersistenceManager.shared.saveOverlays(self.overlays)
+                    self.presentDropError("Impossible de lire le fichier.\n\(error?.localizedDescription ?? "Format non reconnu.")")
+                }
+                return
+            }
+
+            let ext = url.pathExtension.lowercased()
+            DispatchQueue.main.async {
+                if ["mp4", "mov", "m4v"].contains(ext) {
+                    self.loadVideo(url: url)
+                } else if ext == "srt" {
+                    self.loadSRT(url: url)
+                } else {
+                    // Any other file → try as image
+                    guard let image = NSImage(contentsOf: url) else {
+                        self.presentDropError(
+                            "Impossible de charger « \(url.lastPathComponent) » comme image.\n" +
+                            "Formats supportés : PNG, JPEG, TIFF, GIF, WebP.\n" +
+                            "Extension détectée : \(ext.isEmpty ? "aucune" : ext)"
+                        )
+                        return
                     }
+                    self.addOverlay(image: image, url: url, dropLocation: dropLocation, panelSize: panelSize)
                 }
             }
         }
+    }
+
+    private func addOverlay(image: NSImage, url: URL, dropLocation: CGPoint, panelSize: CGSize) {
+        let canvas = previewCanvasSize
+        let imgW = image.size.width
+        let imgH = image.size.height
+        guard imgW > 0, imgH > 0 else {
+            presentDropError("L'image semble corrompue (dimensions nulles).")
+            return
+        }
+
+        // Target: longest side = 300pt in canvas coordinates
+        let targetLongest: CGFloat = 300
+        let scale: CGFloat
+        if imgW >= imgH {
+            // width is longest → displayW = 300 → scale = 300 / (canvas.height * 0.4)
+            scale = targetLongest / (canvas.height * 0.4)
+        } else {
+            // height is longest → displayH = 300 → displayW = 300 * aspectRatio
+            // displayW = canvas.height * 0.4 * scale → scale = displayW / (canvas.height * 0.4)
+            let displayW = targetLongest * (imgW / imgH)
+            scale = displayW / (canvas.height * 0.4)
+        }
+
+        // The canvas is centered in the panel (GeometryReader space)
+        let canvasOriginX = (panelSize.width  - canvas.width)  / 2
+        let canvasOriginY = (panelSize.height - canvas.height) / 2
+
+        // Drop position relative to canvas top-left
+        let localX = dropLocation.x - canvasOriginX
+        let localY = dropLocation.y - canvasOriginY
+
+        // Convert to SwiftUI offset for ZStack(alignment: .bottom):
+        // In .bottom ZStack, offset=(0,0) → overlay sits at bottom-center.
+        // offset.height is relative to the BOTTOM of the canvas (negative = up).
+        // Drop at localY from top → distance from bottom = canvas.height - localY
+        // overlay center should be at that distance from bottom → offset = -(canvas.height - localY)
+        // Convert to SwiftUI offset for ZStack(alignment: .center):
+                // offset=(0,0) → overlay sits at exact center.
+        let offsetX = localX - canvas.width  / 2
+        let offsetY = localY - canvas.height / 2   // <-- Changed from canvas.height to canvas.height / 2
+
+        var overlay = OverlayImage(url: url, nsImage: image)
+        overlay.scale = max(scale, 0.05)  // floor to avoid invisible images
+        overlay.offset = CGSize(width: offsetX, height: offsetY)
+        overlay.lastOffset = overlay.offset
+
+        overlays.append(overlay)
+        PersistenceManager.shared.saveOverlays(overlays)
+    }
+
+    private func presentDropError(_ message: String) {
+        dropError = message
+        showDropError = true
     }
 
     private func loadVideo(url: URL, saveBookmark: Bool = true) {
@@ -271,7 +369,7 @@ final class EditorViewModel: ObservableObject {
             outputFormat: outputFormat,
             cropMode: cropMode,
             blurIntensity: blurIntensity,
-            previewVideoSize: lastPreviewVideoSize,
+            previewVideoSize: previewCanvasSize,
             outputURL: outputURL,
             onProgress: { [weak self] progress in
                 DispatchQueue.main.async {

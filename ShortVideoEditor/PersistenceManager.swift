@@ -218,13 +218,20 @@ final class PersistenceManager {
 
     // MARK: - Color Helpers
 
+    // MARK: - Color Helpers
+
     private func saveColor(_ color: Color, prefix: String) {
-        let ns = NSColor(color)
-        guard let rgb = ns.usingColorSpace(.deviceRGB) else { return }
-        defaults.set(Double(rgb.redComponent),   forKey: "\(prefix)R")
-        defaults.set(Double(rgb.greenComponent), forKey: "\(prefix)G")
-        defaults.set(Double(rgb.blueComponent),  forKey: "\(prefix)B")
-        defaults.set(Double(rgb.alphaComponent), forKey: "\(prefix)A")
+        // Conversion stricte en CGColor sRGB pour éviter toute dérive de gamma
+        guard let cgColor = NSColor(color).cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil),
+              let comps = cgColor.components,
+              cgColor.numberOfComponents >= 3 else { return }
+
+        defaults.set(Double(comps[0]), forKey: "\(prefix)R")
+        defaults.set(Double(comps[1]), forKey: "\(prefix)G")
+        defaults.set(Double(comps[2]), forKey: "\(prefix)B")
+        
+        let alpha = cgColor.numberOfComponents >= 4 ? Double(comps[3]) : 1.0
+        defaults.set(alpha, forKey: "\(prefix)A")
     }
 
     private func loadColor(prefix: String) -> Color? {
@@ -234,13 +241,25 @@ final class PersistenceManager {
             let b = defaults.object(forKey: "\(prefix)B") as? Double,
             let a = defaults.object(forKey: "\(prefix)A") as? Double
         else { return nil }
-        return Color(NSColor(calibratedRed: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: CGFloat(a)))
+        
+        // L'initialiseur par défaut de Color utilise l'espace sRGB
+        return Color(red: r, green: g, blue: b, opacity: a)
     }
-
-    // MARK: - Overlay Settings Encoding
-
     private func encodeOverlaySettings(_ overlay: OverlayImage) -> [String: Any] {
-        let ns = NSColor(overlay.bgColor).usingColorSpace(.deviceRGB)
+        let r, g, b, a: Double
+        
+        // Conversion stricte en sRGB ici aussi
+        if let cgColor = NSColor(overlay.bgColor).cgColor.converted(to: CGColorSpace(name: CGColorSpace.sRGB)!, intent: .defaultIntent, options: nil),
+           let comps = cgColor.components,
+           cgColor.numberOfComponents >= 3 {
+            r = Double(comps[0])
+            g = Double(comps[1])
+            b = Double(comps[2])
+            a = Double(cgColor.numberOfComponents >= 4 ? comps[3] : 1.0)
+        } else {
+            r = 0; g = 0; b = 0; a = 1
+        }
+
         return [
             "offsetW":        Double(overlay.offset.width),
             "offsetH":        Double(overlay.offset.height),
@@ -250,10 +269,10 @@ final class PersistenceManager {
             "bgOpacity":      overlay.bgOpacity,
             "bgCornerRadius": Double(overlay.bgCornerRadius),
             "bgPadding":      Double(overlay.bgPadding),
-            "bgColorR":       Double(ns?.redComponent   ?? 0),
-            "bgColorG":       Double(ns?.greenComponent ?? 0),
-            "bgColorB":       Double(ns?.blueComponent  ?? 0),
-            "bgColorA":       Double(ns?.alphaComponent ?? 1),
+            "bgColorR":       r,
+            "bgColorG":       g,
+            "bgColorB":       b,
+            "bgColorA":       a,
         ]
     }
 
@@ -273,8 +292,8 @@ final class PersistenceManager {
            let g = dict["bgColorG"] as? Double,
            let b = dict["bgColorB"] as? Double,
            let a = dict["bgColorA"] as? Double {
-            overlay.bgColor = Color(NSColor(calibratedRed: CGFloat(r), green: CGFloat(g),
-                                            blue: CGFloat(b), alpha: CGFloat(a)))
+            // Reconstitution propre en sRGB
+            overlay.bgColor = Color(red: r, green: g, blue: b, opacity: a)
         }
     }
 }

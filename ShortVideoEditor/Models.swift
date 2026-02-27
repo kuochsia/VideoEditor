@@ -24,6 +24,9 @@ struct OverlayImage: Identifiable {
     // Transform
     var rotation: Double = 0.0
 
+    // Highlight (used by overlay manager panel)
+    var isHighlighted: Bool = false
+
     // Independent background style (separate from subtitle style)
     var showBackground: Bool = false
     var bgColor: Color = .black

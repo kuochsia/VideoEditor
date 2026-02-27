@@ -41,6 +41,13 @@ struct DraggableOverlayView: View {
                                 .fill(item.bgColor.opacity(item.bgOpacity))
                         }
                     }
+                    .overlay {
+                        if item.isHighlighted {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.blue, lineWidth: 2)
+                                .padding(item.showBackground ? item.bgPadding : 0)
+                        }
+                    }
             }
             .rotationEffect(.degrees(item.rotation))
         }

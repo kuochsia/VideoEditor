@@ -156,20 +156,34 @@ final class VideoEditorEngine {
         parentLayer.addSublayer(videoLayer)
 
         // MARK: Scale Factor
-        // SwiftUI measures in logical points; renderSize is in physical pixels.
-        // On Retina screens (2x), 1 SwiftUI point = 2 physical pixels.
-        // We must multiply the preview canvas size by backingScaleFactor to get
-        // physical pixels, then divide into renderSize (also physical pixels).
-        let screenScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let canvasPhysicalH = previewVideoSize.height * screenScale
-        let canvasPhysicalW = previewVideoSize.width  * screenScale
-        let uiToVideoScale = renderSize.height / canvasPhysicalH
+        let uiToVideoScale = renderSize.height / previewVideoSize.height
+        let fontScale      = uiToVideoScale
+        print("🎬 EXPORT — canvas: \(previewVideoSize), render: \(renderSize), scale: \(String(format:"%.3f", uiToVideoScale))")
+        print("🎬 EXPORT — cropMode: \(cropMode), letterboxOffsetY")
+        for (i, ov) in overlays.enumerated() {
+            print("🎬 Overlay[\(i)] offset=\(ov.offset) scale=\(String(format:"%.3f",ov.scale))")
+        }
+
+        // MARK: Letterbox Offset
+        // In the SwiftUI preview, ZStack(alignment: .bottom) anchors everything to the
+        // canvas bottom. In blurred/black modes the foreground video is AspectFit and
+        // also bottom-aligned (its bottom edge touches the canvas bottom).
+        //
+        // In export, BlurCompositor/AVFoundation centers the video vertically.
+        // This creates a gap below the video that doesn't exist in the preview.
+        // We must shift all overlay/subtitle layers UP by that gap so they match.
+        //
+        // letterboxOffsetY = pixels from export frame bottom to video bottom
+        //                  = (renderH - fgH_export) / 2   (only when video doesn't fill frame)
+        let letterboxOffsetY: CGFloat = 0
+        
 
         // MARK: Overlay Layers
         for overlay in overlays {
             guard let imgLayer = makeOverlayLayer(
                 overlay: overlay,
                 uiToVideoScale: uiToVideoScale,
+                letterboxOffsetY: letterboxOffsetY,
                 renderSize: renderSize
             ) else { continue }
             parentLayer.addSublayer(imgLayer)
@@ -183,6 +197,8 @@ final class VideoEditorEngine {
                 style: subtitleStyle,
                 background: backgroundStyle,
                 uiToVideoScale: uiToVideoScale,
+                fontScale: fontScale,
+                letterboxOffsetY: letterboxOffsetY,
                 renderSize: renderSize,
                 videoDuration: videoDuration
             ) else { continue }
@@ -225,6 +241,7 @@ final class VideoEditorEngine {
     private func makeOverlayLayer(
         overlay: OverlayImage,
         uiToVideoScale: CGFloat,
+        letterboxOffsetY: CGFloat,
         renderSize: CGSize
     ) -> CALayer? {
         var contentImage: CGImage?
@@ -248,17 +265,20 @@ final class VideoEditorEngine {
             finalH += padding * 2
         }
 
-        let centerX = renderSize.width / 2 + (overlay.offset.width * uiToVideoScale)
-        // CoreAnimation Y axis is inverted relative to SwiftUI
-        let centerY = renderSize.height / 2 - (overlay.offset.height * uiToVideoScale)
+        // In SwiftUI preview (ZStack .bottom): offset=(0,0) → overlay at canvas bottom-center.
+        // In export (CA, Y=0=bottom): same anchor point = bottom of frame.
+        // letterboxOffsetY shifts up to compensate for the centered video gap.
+        // CA origin is bottom-left. Center of canvas is renderSize.height / 2.
+        // SwiftUI negative Y moves UP. Core Animation positive Y moves UP.
+        // We subtract the offset to properly map SwiftUI's downward Y-axis to CA's upward Y-axis.
+        let centerX = renderSize.width / 2 + (overlay.offset.width  * uiToVideoScale)
+        let centerY = renderSize.height / 2 - (overlay.offset.height * uiToVideoScale) // <-- Uses renderSize.height/2
 
         let layer = CALayer()
         layer.contents = cg
         layer.bounds = CGRect(x: 0, y: 0, width: finalW, height: finalH)
         layer.position = CGPoint(x: centerX, y: centerY)
-
-        // CoreAnimation rotates clockwise for positive angles; SwiftUI is counter-clockwise.
-        // Negate to match the preview.
+    
         let radians = -overlay.rotation * (.pi / 180)
         layer.setAffineTransform(CGAffineTransform(rotationAngle: CGFloat(radians)))
 
@@ -270,6 +290,8 @@ final class VideoEditorEngine {
         style: SubtitleStyle,
         background: BackgroundStyle,
         uiToVideoScale: CGFloat,
+        fontScale: CGFloat,
+        letterboxOffsetY: CGFloat,
         renderSize: CGSize,
         videoDuration: Double
     ) -> CALayer? {
@@ -278,14 +300,20 @@ final class VideoEditorEngine {
             style: style,
             background: background,
             uiToVideoScale: uiToVideoScale,
+            fontScale: fontScale,
             renderWidth: renderSize.width
         ) else { return nil }
 
-        let imgWidth = CGFloat(subtitleImage.width)
+        let imgWidth  = CGFloat(subtitleImage.width)
         let imgHeight = CGFloat(subtitleImage.height)
 
-        // yPos is 0 (top) to 1 (bottom) in SwiftUI space; CoreAnimation Y=0 is bottom.
-        let yPos = renderSize.height * (1.0 - style.yPosition) - imgHeight / 2
+        // yPosition is 0=top, 1=bottom in SwiftUI canvas (Y-down).
+        // In preview (ZStack .bottom, subtitle uses .position(x:y:)):
+        //   y_from_top = canvasH * yPosition
+        //   y_from_bottom = canvasH * (1 - yPosition)
+        // In export CA (Y=0=bottom):
+        //   yPos = renderH * (1 - yPosition) - imgHeight/2 + letterboxOffsetY
+        let yPos = renderSize.height * (1.0 - style.yPosition) - imgHeight / 2 // <-- Removed + letterboxOffsetY
 
         let layer = CALayer()
         layer.contents = subtitleImage
@@ -352,9 +380,11 @@ final class VideoEditorEngine {
         style: SubtitleStyle,
         background: BackgroundStyle,
         uiToVideoScale: CGFloat,
+        fontScale: CGFloat,
         renderWidth: CGFloat
     ) -> CGImage? {
-        let scaledFontSize = style.fontSize * uiToVideoScale
+        // Font size uses fontScale (accounts for Retina — NSFont is in physical pixels)
+        let scaledFontSize = style.fontSize * fontScale
         let font = NSFont(name: style.fontName, size: scaledFontSize)
             ?? NSFont.systemFont(ofSize: scaledFontSize, weight: .bold)
 
