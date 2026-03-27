@@ -156,7 +156,7 @@ final class VideoEditorEngine {
         parentLayer.addSublayer(videoLayer)
 
         // MARK: Scale Factor
-        let uiToVideoScale = renderSize.height / previewVideoSize.height
+        let uiToVideoScale = renderSize.height / (previewVideoSize.height*2)
         let fontScale      = uiToVideoScale
         print("🎬 EXPORT — canvas: \(previewVideoSize), render: \(renderSize), scale: \(String(format:"%.3f", uiToVideoScale))")
         print("🎬 EXPORT — cropMode: \(cropMode), letterboxOffsetY")
@@ -271,8 +271,8 @@ final class VideoEditorEngine {
         // CA origin is bottom-left. Center of canvas is renderSize.height / 2.
         // SwiftUI negative Y moves UP. Core Animation positive Y moves UP.
         // We subtract the offset to properly map SwiftUI's downward Y-axis to CA's upward Y-axis.
-        let centerX = renderSize.width / 2 + (overlay.offset.width  * uiToVideoScale)
-        let centerY = renderSize.height / 2 - (overlay.offset.height * uiToVideoScale) // <-- Uses renderSize.height/2
+        let centerX = renderSize.width / 2 + (overlay.offset.width*uiToVideoScale  )// uiToVideoScale)
+        let centerY = renderSize.height / 2 - (overlay.offset.height*uiToVideoScale )// uiToVideoScale) // <-- Uses renderSize.height/2
 
         let layer = CALayer()
         layer.contents = cg
@@ -313,12 +313,12 @@ final class VideoEditorEngine {
         //   y_from_bottom = canvasH * (1 - yPosition)
         // In export CA (Y=0=bottom):
         //   yPos = renderH * (1 - yPosition) - imgHeight/2 + letterboxOffsetY
-        let yPos = renderSize.height * (1.0 - style.yPosition) - imgHeight / 2 // <-- Removed + letterboxOffsetY
+        let yPos = renderSize.height * (1.0 - style.yPosition) - imgHeight / uiToVideoScale // <-- Removed + letterboxOffsetY
 
         let layer = CALayer()
         layer.contents = subtitleImage
         layer.frame = CGRect(
-            x: (renderSize.width - imgWidth) / 2,
+            x: (renderSize.width - imgWidth) / uiToVideoScale,
             y: yPos,
             width: imgWidth,
             height: imgHeight
