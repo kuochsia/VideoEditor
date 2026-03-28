@@ -52,7 +52,7 @@ final class EditorViewModel: ObservableObject {
     @Published var subtitleBgOpacity: Double = 0.6
     @Published var subtitleCornerRadius: CGFloat = 10
     @Published var subtitlePadding: CGFloat = 10
-
+    @Published var forceUppercaseSubtitles: Bool = false // <-- NOUVEAU
     // MARK: Export
     @Published var isExporting: Bool = false
     @Published var exportProgress: Double = 0.0
@@ -349,7 +349,8 @@ final class EditorViewModel: ObservableObject {
             fontSize: subtitleFontSize,
             color: subtitleColor,
             yPosition: subtitleYPosition,
-            fontName: subtitleFontName
+            fontName: subtitleFontName,
+            isUppercase: forceUppercaseSubtitles // <-- NOUVEAU
         )
         let bgStyle = BackgroundStyle(
             enabled: showSubtitleBackground,

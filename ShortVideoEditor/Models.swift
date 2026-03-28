@@ -84,22 +84,25 @@ enum CropMode: String, CaseIterable, Identifiable {
     case fill        = "Fill"
     case blurred     = "Flou"
     case black       = "Noir"
+    case blurOnly    = "FlouOnly"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .fill:    return "arrow.up.left.and.arrow.down.right"
-        case .blurred: return "square.stack.3d.down.right"
-        case .black:   return "square.fill"
+        case .fill:     return "arrow.up.left.and.arrow.down.right"
+        case .blurred:  return "square.stack.3d.down.right"
+        case .black:    return "square.fill"
+        case .blurOnly: return "rays"
         }
     }
 
     var description: String {
         switch self {
-        case .fill:    return "Recadrage plein"
-        case .blurred: return "Fond flouté"
-        case .black:   return "Fond noir"
+        case .fill:     return "Recadrage plein"
+        case .blurred:  return "Fond flouté"
+        case .black:    return "Fond noir"
+        case .blurOnly: return "Flou seul"
         }
     }
 }
@@ -111,6 +114,7 @@ struct SubtitleStyle {
     var color: Color
     var yPosition: CGFloat
     var fontName: String
+    var isUppercase: Bool // <-- NOUVEAU
 }
 
 struct BackgroundStyle {

@@ -19,7 +19,8 @@ private enum Keys {
     static let subtitleColorA     = "subtitleColorA"
     static let subtitleYPosition  = "subtitleYPosition"
     static let subtitleFontName   = "subtitleFontName"
-
+    static let forceUppercase     = "forceUppercase" // <-- NOUVEAU
+    
     // Subtitle background
     static let showSubtitleBg     = "showSubtitleBackground"
     static let subtitleBgR        = "subtitleBgR"
@@ -52,7 +53,8 @@ final class PersistenceManager {
         defaults.set(vm.subtitleFontName, forKey: Keys.subtitleFontName)
         defaults.set(Double(vm.subtitleYPosition), forKey: Keys.subtitleYPosition)
         saveColor(vm.subtitleColor, prefix: "subtitleColor")
-
+        defaults.set(vm.forceUppercaseSubtitles, forKey: Keys.forceUppercase) // <-- NOUVEAU
+        
         // Subtitle background
         defaults.set(vm.showSubtitleBackground, forKey: Keys.showSubtitleBg)
         saveColor(vm.subtitleBgColor, prefix: "subtitleBg")
@@ -86,7 +88,9 @@ final class PersistenceManager {
         if let color = loadColor(prefix: "subtitleColor") {
             vm.subtitleColor = color
         }
-
+        if let forceUp = defaults.object(forKey: Keys.forceUppercase) as? Bool {
+                    vm.forceUppercaseSubtitles = forceUp // <-- NOUVEAU
+        }
         // Subtitle background
         if let show = defaults.object(forKey: Keys.showSubtitleBg) as? Bool {
             vm.showSubtitleBackground = show

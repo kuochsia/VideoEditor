@@ -91,6 +91,8 @@ struct SidebarView: View {
     private var typographySection: some View {
         Group {
             Text("TYPOGRAPHIE").font(.caption).foregroundColor(.secondary).bold()
+            Toggle("Majuscules", isOn: $vm.forceUppercaseSubtitles)
+                            .font(.system(size: 12, weight: .bold)) // <-- NOUVEAU
             HStack {
                 Text("Police")
                 Spacer()

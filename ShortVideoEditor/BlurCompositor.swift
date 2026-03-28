@@ -54,12 +54,13 @@ final class BlurCompositor: NSObject, AVVideoCompositing {
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         guard
             let bgBuffer = request.sourceFrame(byTrackID: Self._bgTrackID),
-            let fgBuffer = request.sourceFrame(byTrackID: Self._fgTrackID),
             let outputBuffer = renderContext?.newPixelBuffer()
         else {
             request.finish(with: CompositorError.missingFrame)
             return
         }
+
+        let blurOnly = Self._fgTrackID == kCMPersistentTrackID_Invalid
 
         let rW = Self._renderSize.width
         let rH = Self._renderSize.height
@@ -72,9 +73,6 @@ final class BlurCompositor: NSObject, AVVideoCompositing {
         let bgW = bgImage.extent.width
         let bgH = bgImage.extent.height
         let fillScale = max(rW / bgW, rH / bgH)
-        // Scale first, then translate to center
-        let bgTransform = CGAffineTransform(scaleX: fillScale, y: fillScale)
-            .translatedBy(x: 0, y: 0) // origin after scale
         let bgScaled = bgImage
             .transformed(by: CGAffineTransform(scaleX: fillScale, y: fillScale))
             .transformed(by: CGAffineTransform(
@@ -88,32 +86,36 @@ final class BlurCompositor: NSObject, AVVideoCompositing {
             .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": Self._blurRadius])
             .cropped(to: canvas)
 
-        // --- 2. Foreground: AspectFit, centered ---
-        let fgRaw = CIImage(cvPixelBuffer: fgBuffer)
-        let fgImage = correctedImage(fgRaw, videoTrackTransform: Self._preferredTransform)
+        let result: CIImage
 
-        let fgW = fgImage.extent.width
-        let fgH = fgImage.extent.height
-        let fitScale = min(rW / fgW, rH / fgH)
-        let fgScaled = fgImage
-            .transformed(by: CGAffineTransform(scaleX: fitScale, y: fitScale))
-            .transformed(by: CGAffineTransform(
-                translationX: (rW - fgW * fitScale) / 2,
-                y: (rH - fgH * fitScale) / 2
-            ))
+        if blurOnly {
+            // --- Flou seul: just the blurred background, no foreground ---
+            result = blurred
+        } else {
+            // --- 2. Foreground: AspectFit, centered ---
+            guard let fgBuffer = request.sourceFrame(byTrackID: Self._fgTrackID) else {
+                request.finish(with: CompositorError.missingFrame)
+                return
+            }
+            let fgRaw = CIImage(cvPixelBuffer: fgBuffer)
+            let fgImage = correctedImage(fgRaw, videoTrackTransform: Self._preferredTransform)
 
-        // --- 3. Composite fg (sharp) over blurred bg ---
-        let composited = fgScaled.composited(over: blurred)
+            let fgW = fgImage.extent.width
+            let fgH = fgImage.extent.height
+            let fitScale = min(rW / fgW, rH / fgH)
+            let fgScaled = fgImage
+                .transformed(by: CGAffineTransform(scaleX: fitScale, y: fitScale))
+                .transformed(by: CGAffineTransform(
+                    translationX: (rW - fgW * fitScale) / 2,
+                    y: (rH - fgH * fitScale) / 2
+                ))
+
+            // --- 3. Composite fg (sharp) over blurred bg ---
+            result = fgScaled.composited(over: blurred)
+        }
 
         // --- 4. Render ---
-        ciContext.render(
-            composited,
-            to: outputBuffer,
-            bounds: canvas,
-            // Use the color space from the source buffer to preserve original luminance
-            colorSpace: nil
-        )
-
+        ciContext.render(result, to: outputBuffer, bounds: canvas, colorSpace: nil)
         request.finish(withComposedVideoFrame: outputBuffer)
     }
 

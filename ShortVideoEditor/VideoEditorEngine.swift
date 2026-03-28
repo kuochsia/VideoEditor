@@ -65,7 +65,7 @@ final class VideoEditorEngine {
 
         // For blurred mode we add a second video track for the blurred background
         var compBgTrack: AVMutableCompositionTrack? = nil
-        if cropMode == .blurred {
+        if cropMode == .blurred || cropMode == .blurOnly {
             compBgTrack = mixComposition.addMutableTrack(
                 withMediaType: .video,
                 preferredTrackID: kCMPersistentTrackID_Invalid
@@ -99,7 +99,7 @@ final class VideoEditorEngine {
         instruction.timeRange = timeRange
 
         switch cropMode {
-
+            
         case .fill:
             // AspectFill: scale so the video covers the entire render size
             let scale = max(renderW / natW, renderH / natH)
@@ -111,7 +111,7 @@ final class VideoEditorEngine {
             let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compVideoTrack)
             layerInstruction.setTransform(transform, at: .zero)
             instruction.layerInstructions = [layerInstruction]
-
+            
         case .black:
             // AspectFit: scale so entire video fits inside render size, black bars on sides/top
             let scale = min(renderW / natW, renderH / natH)
@@ -124,7 +124,7 @@ final class VideoEditorEngine {
             layerInstruction.setTransform(transform, at: .zero)
             instruction.layerInstructions = [layerInstruction]
             instruction.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 1)
-
+            
         case .blurred:
             // Both tracks pass their raw buffers to BlurCompositor.
             // The compositor handles fill/fit scaling + blur itself,
@@ -133,15 +133,23 @@ final class VideoEditorEngine {
             let fgInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compVideoTrack)
             instruction.layerInstructions = [fgInstruction, bgInstruction]
             videoComposition.customVideoCompositorClass = BlurCompositor.self
+        case .blurOnly:
+            // Only the background track — full-screen blurred, no sharp foreground.
+            let bgInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compBgTrack!)
+            instruction.layerInstructions = [bgInstruction]
+            videoComposition.customVideoCompositorClass = BlurCompositor.self
+            
         }
+        
+       
 
         videoComposition.instructions = [instruction]
 
         // MARK: Blur compositor context (passed via thread-local workaround using objc association)
-        if cropMode == .blurred, let bgTrack = compBgTrack {
+        if cropMode == .blurred || cropMode == .blurOnly, let bgTrack = compBgTrack {
             BlurCompositor.configure(
                 bgTrackID: bgTrack.trackID,
-                fgTrackID: compVideoTrack.trackID,
+                fgTrackID: cropMode == .blurOnly ? kCMPersistentTrackID_Invalid : compVideoTrack.trackID,
                 blurRadius: blurIntensity,
                 renderSize: renderSize,
                 preferredTransform: videoTrack.preferredTransform
@@ -271,9 +279,10 @@ final class VideoEditorEngine {
         // CA origin is bottom-left. Center of canvas is renderSize.height / 2.
         // SwiftUI negative Y moves UP. Core Animation positive Y moves UP.
         // We subtract the offset to properly map SwiftUI's downward Y-axis to CA's upward Y-axis.
-        let centerX = renderSize.width / 2 + (overlay.offset.width*uiToVideoScale  )// uiToVideoScale)
-        let centerY = renderSize.height / 2 - (overlay.offset.height*uiToVideoScale )// uiToVideoScale) // <-- Uses renderSize.height/2
-
+        let centerX = renderSize.width / 2 + (overlay.offset.width  * uiToVideoScale)
+        let centerY = renderSize.height / 2 - (overlay.offset.height * uiToVideoScale)
+        print("🎬 Param — x: \(centerX),y: \(centerY),Overlay: \(overlay.offset ), render: \(renderSize), lett: \(String(format:"%.3f", letterboxOffsetY))")
+       
         let layer = CALayer()
         layer.contents = cg
         layer.bounds = CGRect(x: 0, y: 0, width: finalW, height: finalH)
@@ -286,70 +295,74 @@ final class VideoEditorEngine {
     }
 
     private func makeSubtitleLayer(
-        entry: SubtitleEntry,
-        style: SubtitleStyle,
-        background: BackgroundStyle,
-        uiToVideoScale: CGFloat,
-        fontScale: CGFloat,
-        letterboxOffsetY: CGFloat,
-        renderSize: CGSize,
-        videoDuration: Double
-    ) -> CALayer? {
-        guard let subtitleImage = renderSubtitleImage(
-            text: entry.text,
-            style: style,
-            background: background,
-            uiToVideoScale: uiToVideoScale,
-            fontScale: fontScale,
-            renderWidth: renderSize.width
-        ) else { return nil }
+            entry: SubtitleEntry,
+            style: SubtitleStyle,
+            background: BackgroundStyle,
+            uiToVideoScale: CGFloat,
+            fontScale: CGFloat,
+            letterboxOffsetY: CGFloat,
+            renderSize: CGSize,
+            videoDuration: Double
+        ) -> CALayer? {
+            
+            // 1. On applique la majuscule ici si l'option est activée
+            let finalString = style.isUppercase ? entry.text.uppercased() : entry.text
+            
+            guard let subtitleImage = renderSubtitleImage(
+                text: finalString,
+                style: style,
+                background: background,
+                uiToVideoScale: uiToVideoScale,
+                fontScale: fontScale,
+                renderWidth: renderSize.width
+            ) else { return nil }
+            
+            let imgWidth  = CGFloat(subtitleImage.width)
+            let imgHeight = CGFloat(subtitleImage.height)
 
-        let imgWidth  = CGFloat(subtitleImage.width)
-        let imgHeight = CGFloat(subtitleImage.height)
+            let yPos = renderSize.height * (1.0 - style.yPosition) - imgHeight / 2
 
-        // yPosition is 0=top, 1=bottom in SwiftUI canvas (Y-down).
-        // In preview (ZStack .bottom, subtitle uses .position(x:y:)):
-        //   y_from_top = canvasH * yPosition
-        //   y_from_bottom = canvasH * (1 - yPosition)
-        // In export CA (Y=0=bottom):
-        //   yPos = renderH * (1 - yPosition) - imgHeight/2 + letterboxOffsetY
-        let yPos = renderSize.height * (1.0 - style.yPosition) - imgHeight / uiToVideoScale // <-- Removed + letterboxOffsetY
+            let layer = CALayer()
+            layer.contents = subtitleImage
+            layer.frame = CGRect(
+                x: (renderSize.width - imgWidth) / 2,
+                y: yPos,
+                width: imgWidth,
+                height: imgHeight
+            )
 
-        let layer = CALayer()
-        layer.contents = subtitleImage
-        layer.frame = CGRect(
-            x: (renderSize.width - imgWidth) / uiToVideoScale,
-            y: yPos,
-            width: imgWidth,
-            height: imgHeight
-        )
+            layer.opacity = 0.0
 
-        // Keyframe animation spanning the full video duration.
-        // Hard cut to opacity 1 at entry.start, stays fully visible,
-        // then fades to 0 over the last 300ms before entry.end.
-        layer.opacity = 0.0
+            // 2. Animation corrigée (sécurisée pour éviter les crashs d'export)
+            let d = videoDuration
+            let fadeDuration = min(0.3, (entry.end - entry.start) * 0.5)
+            
+            let startRel = max(0.0, entry.start / d)
+            let endRel = min(1.0, entry.end / d)
+            let fadeStartRel = max(startRel, (entry.end - fadeDuration) / d)
+            
+            let epsilon = 0.00001
+            let preStartRel = max(0.0, startRel - epsilon)
 
-        let d = videoDuration
-        let fadeDuration = min(0.3, (entry.end - entry.start) * 0.5) // 300ms max, never over half the subtitle
-        let fadeStart = entry.end - fadeDuration
+            let anim = CAKeyframeAnimation(keyPath: "opacity")
+            anim.values   = [0.0, 0.0, 1.0, 1.0, 0.0]
+            anim.keyTimes = [
+                NSNumber(value: 0.0),
+                NSNumber(value: preStartRel),
+                NSNumber(value: startRel),
+                NSNumber(value: fadeStartRel),
+                NSNumber(value: endRel)
+            ]
+            
+            anim.beginTime             = AVCoreAnimationBeginTimeAtZero
+            anim.duration              = d
+            anim.calculationMode       = .linear
+            anim.fillMode              = .both
+            anim.isRemovedOnCompletion = false
+            layer.add(anim, forKey: "visibility")
 
-        let anim = CAKeyframeAnimation(keyPath: "opacity")
-        anim.values   = [0.0, 1.0, 1.0,  0.0]
-        anim.keyTimes = [
-            NSNumber(value: entry.start / d), // hard cut: jump to 1 (duplicate keyframe)
-            NSNumber(value: entry.start / d), // fully visible
-            NSNumber(value: fadeStart   / d), // hold at 1 until here
-            NSNumber(value: entry.end   / d)  // fade to 0
-        ]
-        anim.beginTime             = AVCoreAnimationBeginTimeAtZero
-        anim.duration              = d
-        anim.calculationMode       = .linear
-        anim.fillMode              = .both
-        anim.isRemovedOnCompletion = false
-        layer.add(anim, forKey: "visibility")
-
-        return layer
-    }
+            return layer
+        }
 
     // MARK: - Image Renderers
 
@@ -376,59 +389,83 @@ final class VideoEditorEngine {
     }
 
     private func renderSubtitleImage(
-        text: String,
-        style: SubtitleStyle,
-        background: BackgroundStyle,
-        uiToVideoScale: CGFloat,
-        fontScale: CGFloat,
-        renderWidth: CGFloat
-    ) -> CGImage? {
-        // Font size uses fontScale (accounts for Retina — NSFont is in physical pixels)
-        let scaledFontSize = style.fontSize * fontScale
-        let font = NSFont(name: style.fontName, size: scaledFontSize)
-            ?? NSFont.systemFont(ofSize: scaledFontSize, weight: .bold)
+            text: String,
+            style: SubtitleStyle,
+            background: BackgroundStyle,
+            uiToVideoScale: CGFloat,
+            fontScale: CGFloat,
+            renderWidth: CGFloat
+        ) -> CGImage? {
+            
+            let scaledFontSize = style.fontSize * fontScale
+            
+            // 1. Charger la police avec la graisse (Bold)
+            let baseFont = NSFont(name: style.fontName, size: scaledFontSize)
+                ?? NSFont.systemFont(ofSize: scaledFontSize)
+            let fontDescriptor = baseFont.fontDescriptor.withSymbolicTraits(.bold)
+            let font = NSFont(descriptor: fontDescriptor, size: scaledFontSize)
+                ?? NSFont.systemFont(ofSize: scaledFontSize, weight: .bold)
 
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .center
-
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor(style.color),
-            .paragraphStyle: paragraphStyle
-        ]
-        let attrStr = NSAttributedString(string: text, attributes: attrs)
-        // Use 90% of render width so text has some horizontal margin
-        let maxW = renderWidth * 0.9
-        let boundingRect = attrStr.boundingRect(
-            with: NSSize(width: maxW, height: 2000),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-
-        let padding = background.enabled ? background.padding * uiToVideoScale : 0
-        let finalW = ceil(boundingRect.width + padding * 2)
-        let finalH = ceil(boundingRect.height + padding * 2)
-
-        return renderOffscreen(width: Int(finalW), height: Int(finalH)) { ctx in
-            ctx.clear(CGRect(x: 0, y: 0, width: finalW, height: finalH))
-            if background.enabled {
-                let rect = NSRect(x: 0, y: 0, width: finalW, height: finalH)
-                let path = NSBezierPath(
-                    roundedRect: rect,
-                    xRadius: background.cornerRadius * uiToVideoScale,
-                    yRadius: background.cornerRadius * uiToVideoScale
-                )
-                NSColor(background.color).withAlphaComponent(background.opacity).setFill()
-                path.fill()
-            }
-            let textRect = NSRect(
-                x: padding,
-                y: padding - (font.descender / 2),
-                width: boundingRect.width,
-                height: boundingRect.height
+            let maxW = renderWidth * 0.70
+            
+            // 2. MESURE : Utiliser l'alignement à gauche pour forcer boundingRect à donner la taille RÉELLE
+            let measureStyle = NSMutableParagraphStyle()
+            measureStyle.alignment = .left
+            
+            let measureAttrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .paragraphStyle: measureStyle
+            ]
+            let measureStr = NSAttributedString(string: text, attributes: measureAttrs)
+            
+            let tightRect = measureStr.boundingRect(
+                with: NSSize(width: maxW, height: 2000),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
             )
-            attrStr.draw(in: textRect)
+            
+            // La vraie taille dynamique de notre texte
+            let actualTextWidth = ceil(tightRect.width)
+            let actualTextHeight = ceil(tightRect.height)
+            
+            // 3. DESSIN : Utiliser l'alignement centré
+            let drawStyle = NSMutableParagraphStyle()
+            drawStyle.alignment = .center
+            
+            let drawAttrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: NSColor(style.color),
+                .paragraphStyle: drawStyle
+            ]
+            let drawStr = NSAttributedString(string: text, attributes: drawAttrs)
+            
+            let padding = background.enabled ? background.padding * uiToVideoScale : 0
+            let finalW = actualTextWidth + padding * 2
+            let finalH = actualTextHeight + padding * 2
+
+            return renderOffscreen(width: Int(finalW), height: Int(finalH)) { ctx in
+                ctx.clear(CGRect(x: 0, y: 0, width: finalW, height: finalH))
+                
+                if background.enabled {
+                    let rect = NSRect(x: 0, y: 0, width: finalW, height: finalH)
+                    let path = NSBezierPath(
+                        roundedRect: rect,
+                        xRadius: background.cornerRadius * uiToVideoScale,
+                        yRadius: background.cornerRadius * uiToVideoScale
+                    )
+                    NSColor(background.color).withAlphaComponent(background.opacity).setFill()
+                    path.fill()
+                }
+                
+                // On dessine le texte dans un rectangle qui moule parfaitement sa vraie taille
+                let textRect = NSRect(
+                    x: padding,
+                    y: padding - (font.descender / 2),
+                    width: actualTextWidth,
+                    height: actualTextHeight
+                )
+                drawStr.draw(in: textRect)
+            }
         }
-    }
 
     // MARK: - Offscreen Rendering Helper
 

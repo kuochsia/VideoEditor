@@ -74,15 +74,24 @@ struct ContentView: View {
             // MARK: Background
             switch vm.cropMode {
             case .fill:
-                AVPlayerNSView(player: player, gravity: .resizeAspectFill).frame(width: w, height: h)
+                AVPlayerNSView(player: player, gravity: .resizeAspectFill)
+                    .frame(width: w, height: h)
+
             case .black:
                 blackBackground(player: player, w: w, h: h)
+
             case .blurred:
                 blurredBackground(player: player, w: w, h: h)
+
+            case .blurOnly:
+                AVPlayerNSView(player: player, gravity: .resizeAspectFill)
+                    .frame(width: w, height: h)
+                    .blur(radius: CGFloat(vm.blurIntensity) * 0.3)
+                    .clipped()
             }
 
-            // MARK: Overlays (NEW: Wrapped in a centered container)
-            ZStack {
+            // MARK: Overlays
+            ZStack { // <-- 1. Ajoute ce ZStack
                 ForEach($vm.overlays) { $item in
                     DraggableOverlayView(
                         item: $item,
@@ -91,7 +100,7 @@ struct ContentView: View {
                     )
                 }
             }
-            .frame(width: w, height: h) // Forces true center alignment
+            .frame(width: w, height: h) // <-- 2. Ajoute cette frame indispensable !
 
             // MARK: Subtitles
             if !vm.currentSubtitleText.isEmpty {
@@ -169,9 +178,10 @@ struct ContentView: View {
     }
 
     private func subtitleView(w: CGFloat, h: CGFloat) -> some View {
-        Text(vm.currentSubtitleText)
+        let displayText = vm.forceUppercaseSubtitles ? vm.currentSubtitleText.uppercased() : vm.currentSubtitleText
+        return Text(displayText)
             .font(.custom(vm.subtitleFontName, size: vm.subtitleFontSize))
-            .fontWeight(.bold)
+            //.fontWeight(.bold)
             .foregroundColor(vm.subtitleColor)
             .multilineTextAlignment(.center)
             .padding(vm.subtitlePadding)
@@ -182,6 +192,8 @@ struct ContentView: View {
                 }
             }
             .shadow(color: vm.showSubtitleBackground ? .clear : .black, radius: 2)
+        
+            .frame(maxWidth: w * 0.70) // <-- CONTRAINTE DE 70% 
             .position(x: w / 2, y: h * vm.subtitleYPosition)
             .allowsHitTesting(false)
     }
