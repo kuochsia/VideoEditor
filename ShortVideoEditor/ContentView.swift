@@ -136,14 +136,17 @@ struct ContentView: View {
             vm.previewCanvasSize    = CGSize(width: w, height: h)
         }
         .onChange(of: h) { newH in
+            guard !vm.isExporting else { return } // <-- PROTECTION
             vm.lastPreviewVideoSize = CGSize(width: w,    height: newH)
             vm.previewCanvasSize    = CGSize(width: w,    height: newH)
         }
         .onChange(of: w) { newW in
+            guard !vm.isExporting else { return } // <-- PROTECTION
             vm.lastPreviewVideoSize = CGSize(width: newW, height: h)
             vm.previewCanvasSize    = CGSize(width: newW, height: h)
         }
         .onChange(of: vm.outputFormat) { _ in
+            guard !vm.isExporting else { return } // <-- PROTECTION
             vm.lastPreviewVideoSize = CGSize(width: w, height: h)
             vm.previewCanvasSize    = CGSize(width: w, height: h)
         }

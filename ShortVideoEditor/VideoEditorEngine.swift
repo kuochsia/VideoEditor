@@ -396,16 +396,15 @@ final class VideoEditorEngine {
             fontScale: CGFloat,
             renderWidth: CGFloat
         ) -> CGImage? {
-            
             let scaledFontSize = style.fontSize * fontScale
             
             // 1. Charger la police avec la graisse (Bold)
             let baseFont = NSFont(name: style.fontName, size: scaledFontSize)
                 ?? NSFont.systemFont(ofSize: scaledFontSize)
             let fontDescriptor = baseFont.fontDescriptor.withSymbolicTraits(.bold)
-            let font = NSFont(descriptor: fontDescriptor, size: scaledFontSize)
-                ?? NSFont.systemFont(ofSize: scaledFontSize, weight: .bold)
-
+            var font = NSFont(name: style.fontName, size: scaledFontSize)
+                        ?? NSFont.systemFont(ofSize: scaledFontSize)
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
             let maxW = renderWidth * 0.70
             
             // 2. MESURE : Utiliser l'alignement à gauche pour forcer boundingRect à donner la taille RÉELLE
